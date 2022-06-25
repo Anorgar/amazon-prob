@@ -1,0 +1,42 @@
+
+plugins {
+    id "com.github.johnrengelman.shadow" version "4.0.2"
+    id "io.spring.dependency-management" version "1.0.6.RELEASE"
+    id "java"
+    id "net.ltgt.apt-idea" version "0.21"
+    id "application"
+}
+
+
+repositories {
+    mavenCentral()
+}
+
+wrapper {
+    distributionType = Wrapper.DistributionType.BIN
+}
+
+
+dependencies {
+    implementation ('org.jsoup:jsoup:1.14.3')
+    implementation ('org.slf4j:slf4j-api:1.7.32')
+    implementation ('org.apache.logging.log4j:log4j-core:2.14.1')
+    implementation("com.sun.mail:jakarta.mail:2.0.1")
+    implementation("commons-io:commons-io:2.11.0")
+    implementation("org.apache.commons:commons-lang3:3.12.0")
+    runtime("ch.qos.logback:logback-classic:1.2.3")
+
+}
+
+mainClassName = "fr.micronaut.presentation.petcore.Application"
+// use JUnit 5 platform
+tasks.withType(JavaCompile){
+    options.encoding = "UTF-8"
+    options.compilerArgs.add('-parameters')
+}
+
+shadowJar {
+    mergeServiceFiles()
+}
+
+run.jvmArgs('-noverify', '-XX:TieredStopAtLevel=1', '-Dcom.sun.management.jmxremote')
