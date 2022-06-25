@@ -28,7 +28,7 @@ dependencies {
 
 }
 
-mainClassName = "fr.micronaut.presentation.petcore.Application"
+mainClassName = "fr.amazon.prob.Application"
 // use JUnit 5 platform
 tasks.withType(JavaCompile){
     options.encoding = "UTF-8"
