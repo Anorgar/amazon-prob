@@ -76,7 +76,7 @@ public class Application {
       String data = IOUtils.toString(fis, StandardCharsets.UTF_8);
       if (StringUtils.isNoneBlank(data)){
         log.info("Previous rank is {}", data);
-        return Integer.parseInt(data);
+        return Integer.parseInt(data.replaceAll("\n","").trim());
       }
       throw new RuntimeException("No persisted Rank found");
     } catch (IOException e){
