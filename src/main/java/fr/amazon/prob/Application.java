@@ -14,6 +14,8 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.regex.Matcher;
@@ -38,14 +40,31 @@ public class Application {
 
   private static final String TOP_REGEX = "(\\d+) en.*";
   private static final Pattern TOP_PATTERN = Pattern.compile(TOP_REGEX);
-  public static final String PERSISTED_RANK_FILE = "persisted_rank.txt";
+  private static final String TOTAL_REGEX = ".* ((\\d+,)?\\d+) en Livres.*";
+  private static final Pattern TOTAL_PATTERN = Pattern.compile(TOTAL_REGEX);
+  public static final String PERSISTED_RANK_FILE = "/home/ubuntu/code/amazon-prob/persisted_rank.txt";
+  public static final String STAT_FILE = "/home/ubuntu/code/amazon-prob/stats.csv";
   public static final int AMAZON_TOP_RANK = 100;
 
   public static void main(String[] args) {
     try {
-      int rank = extractRankFromProductPage();
+      Document document = callProductPage();
+      int rank = extractBestRankFromProductPage(document);
       int previousRank = getPersistedRank();
+      int totalRank = extractTotalRankFromProductPage(document);
       persistCurrentRank(rank);
+
+      try (FileWriter statFile = new FileWriter(STAT_FILE, true)) {
+        String stat = LocalDateTime.now()
+            + ";"
+            + totalRank
+            + ";"
+            + rank
+            + "\n";
+        statFile.write(stat);
+      } catch (IOException ioe) {
+        log.error("Unable to persist stats", ioe);
+      }
 
       if (rank <= AMAZON_TOP_RANK && rank < previousRank) {
         log.info("Current rank {} is good so an email will be sent", rank);
@@ -54,16 +73,16 @@ public class Application {
         log.info("Rank {} is too low for an email to be sent", rank);
       }
       log.info("Job finished with success!");
-    } catch (RuntimeException e){
+    } catch (RuntimeException e) {
       log.error("Unable to execute bach properly", e);
     }
   }
 
   private static void persistCurrentRank(int rank) {
     log.info("Start persisting current rank");
-    try (PrintWriter printWriter = new PrintWriter(new FileWriter(PERSISTED_RANK_FILE))){
+    try (PrintWriter printWriter = new PrintWriter(new FileWriter(PERSISTED_RANK_FILE))) {
       printWriter.print(rank);
-    } catch (IOException e){
+    } catch (IOException e) {
       log.error("Unable to persist rank", e);
       throw new RuntimeException(e);
     }
@@ -74,43 +93,67 @@ public class Application {
     log.info("Retrieve previously persisted rank");
     try (FileInputStream fis = new FileInputStream(PERSISTED_RANK_FILE)) {
       String data = IOUtils.toString(fis, StandardCharsets.UTF_8);
-      if (StringUtils.isNoneBlank(data)){
+      if (StringUtils.isNoneBlank(data)) {
         log.info("Previous rank is {}", data);
-        return Integer.parseInt(data.replaceAll("\n","").trim());
+        return Integer.parseInt(data.replace("\n", "").trim());
       }
       throw new RuntimeException("No persisted Rank found");
-    } catch (IOException e){
+    } catch (IOException e) {
       log.error("Unable ro read persisted previous rank", e);
       throw new RuntimeException(e);
     }
   }
 
-  public static int extractRankFromProductPage() {
-    log.info("Start extracting rank");
+  public static Document callProductPage() {
+    log.info("Start calling amazon");
     try {
       Document document = Jsoup.connect(PRODUCT_PAGE)
-          .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:101.0) Gecko/20100101 Firefox/101.0")
+          .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:105.0) Gecko/20100101 Firefox/105.0")
+          .header("Accept-Language","fr,fr-FR;q=0.8,en-US;q=0.5,en;q=0.3")
+          .cookies(Map.of("i18n-prefs", "EUR; Domain=.amazon.fr; Expires=Thu, 12-Oct-2023 13:39:04 GMT; Path=/"))
           .get();
       log.info("Amazon page successfully fetched");
-      Element element = document.getElementById("detailBulletsWrapper_feature_div");
-      Elements elementsByClass = element.getElementsByClass("a-list-item");
-      int rank = elementsByClass.stream()
-          .filter(elem -> elem.text().matches(TOP_REGEX))
-          .map(Application::extractRanking)
-          .filter(Objects::nonNull)
-          .sorted()
-          .findFirst()
-          .orElseThrow(() -> new RuntimeException("Rank not found in product page"));
 
-      log.info("Better rank for the product is {}", rank);
-      return rank;
+      return document;
     } catch (IOException e) {
       log.error("Unable to retrieve product page", e);
       throw new RuntimeException("Unable to retrieve product page", e);
     }
   }
 
-  public static void sendMail(int rank){
+  public static int extractBestRankFromProductPage(Document document) {
+    log.info("Start extracting best rank");
+    Element element = document.getElementById("detailBulletsWrapper_feature_div");
+    Elements elementsByClass = element.getElementsByClass("a-list-item");
+    int rank = elementsByClass.stream()
+        .filter(elem -> elem.text().matches(TOP_REGEX))
+        .map(elem -> extractRanking(elem, TOP_PATTERN))
+        .filter(Objects::nonNull)
+        .sorted()
+        .findFirst()
+        .orElseThrow(() -> new RuntimeException("Best rank not found in product page"));
+
+    log.info("Best rank for the product is {}", rank);
+    return rank;
+  }
+
+  public static int extractTotalRankFromProductPage(Document document) {
+    log.info("Start extracting total rank");
+    Element element = document.getElementById("detailBulletsWrapper_feature_div");
+    Elements elementsByClass = element.getElementsByClass("a-list-item");
+    int rank = elementsByClass.stream()
+        .filter(elem -> elem.text().matches(TOTAL_REGEX))
+        .map(elem -> extractRanking(elem, TOTAL_PATTERN))
+        .filter(Objects::nonNull)
+        .sorted()
+        .findFirst()
+        .orElseThrow(() -> new RuntimeException("Rank not found in product page"));
+
+    log.info("Total rank for the product is {}", rank);
+    return rank;
+  }
+
+  public static void sendMail(int rank) {
     log.info("Start sending email");
     Properties prop = new Properties();
     prop.put("mail.smtp.host", "smtp.gmail.com");
@@ -146,10 +189,10 @@ public class Application {
     }
   }
 
-  public static Integer extractRanking(Element elem){
-    Matcher matcher = TOP_PATTERN.matcher(elem.text());
-    if (matcher.matches()){
-      return Integer.parseInt(matcher.group(1));
+  public static Integer extractRanking(Element elem, Pattern pattern) {
+    Matcher matcher = pattern.matcher(elem.text());
+    if (matcher.matches()) {
+      return Integer.parseInt(matcher.group(1).replace(",", ""));
     }
     return null;
   }
