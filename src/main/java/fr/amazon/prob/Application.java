@@ -14,8 +14,8 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.regex.Matcher;
@@ -33,42 +33,32 @@ public class Application {
 
   private static final Logger log = LoggerFactory.getLogger(Application.class);
 
-  public static final String PRODUCT_PAGE = "your product url";
+  public static final Map<String, String> PRODUCT_PAGES = Map.of(
+      "broche",  "url produit",
+      "numeric", "url produit");
   public static final String FROM_EMAIL = "your gmail";
   public static final String TO_EMAILS = "destination mail";
   public static final String APP_PASSWORD = "your gmail app password";
 
   private static final String TOP_REGEX = "(\\d+) en.*";
   private static final Pattern TOP_PATTERN = Pattern.compile(TOP_REGEX);
-  private static final String TOTAL_REGEX = ".* ((\\d+,)?\\d+) en Livres.*";
-  private static final Pattern TOTAL_PATTERN = Pattern.compile(TOTAL_REGEX);
-  public static final String PERSISTED_RANK_FILE = "/home/ubuntu/code/amazon-prob/persisted_rank.txt";
-  public static final String STAT_FILE = "/home/ubuntu/code/amazon-prob/stats.csv";
+  public static final String PERSISTED_RANK_FILE = "/home/ubuntu/code/amazon-prob/persisted_rank_";
   public static final int AMAZON_TOP_RANK = 100;
 
   public static void main(String[] args) {
-    try {
-      Document document = callProductPage();
-      int rank = extractBestRankFromProductPage(document);
-      int previousRank = getPersistedRank();
-      int totalRank = extractTotalRankFromProductPage(document);
-      persistCurrentRank(rank);
+    PRODUCT_PAGES.entrySet().forEach(Application::findRankForProduct);
+  }
 
-      try (FileWriter statFile = new FileWriter(STAT_FILE, true)) {
-        String stat = LocalDateTime.now()
-            + ";"
-            + totalRank
-            + ";"
-            + rank
-            + "\n";
-        statFile.write(stat);
-      } catch (IOException ioe) {
-        log.error("Unable to persist stats", ioe);
-      }
+  private static void findRankForProduct(Map.Entry<String, String> entry) {
+    try {
+      Document document = callProductPage(entry);
+      int rank = extractBestRankFromProductPage(document);
+      int previousRank = getPersistedRank(entry);
+      persistCurrentRank(entry, rank);
 
       if (rank <= AMAZON_TOP_RANK && rank < previousRank) {
         log.info("Current rank {} is good so an email will be sent", rank);
-        sendMail(rank);
+        sendMail(entry, rank);
       } else {
         log.info("Rank {} is too low for an email to be sent", rank);
       }
@@ -78,9 +68,9 @@ public class Application {
     }
   }
 
-  private static void persistCurrentRank(int rank) {
+  private static void persistCurrentRank(Map.Entry<String, String> entry, int rank) {
     log.info("Start persisting current rank");
-    try (PrintWriter printWriter = new PrintWriter(new FileWriter(PERSISTED_RANK_FILE))) {
+    try (PrintWriter printWriter = new PrintWriter(new FileWriter(generateRankFileName(entry)))) {
       printWriter.print(rank);
     } catch (IOException e) {
       log.error("Unable to persist rank", e);
@@ -89,9 +79,9 @@ public class Application {
     log.info("Current rank is persisted with success");
   }
 
-  private static int getPersistedRank() {
+  private static int getPersistedRank(Map.Entry<String, String> entry) {
     log.info("Retrieve previously persisted rank");
-    try (FileInputStream fis = new FileInputStream(PERSISTED_RANK_FILE)) {
+    try (FileInputStream fis = new FileInputStream(generateRankFileName(entry))) {
       String data = IOUtils.toString(fis, StandardCharsets.UTF_8);
       if (StringUtils.isNoneBlank(data)) {
         log.info("Previous rank is {}", data);
@@ -104,10 +94,14 @@ public class Application {
     }
   }
 
-  public static Document callProductPage() {
+  private static String generateRankFileName(Entry<String, String> entry) {
+    return PERSISTED_RANK_FILE + entry.getKey() + ".txt";
+  }
+
+  public static Document callProductPage(Map.Entry<String, String> entry) {
     log.info("Start calling amazon");
     try {
-      Document document = Jsoup.connect(PRODUCT_PAGE)
+      Document document = Jsoup.connect(entry.getValue())
           .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:105.0) Gecko/20100101 Firefox/105.0")
           .header("Accept-Language","fr,fr-FR;q=0.8,en-US;q=0.5,en;q=0.3")
           .cookies(Map.of("i18n-prefs", "EUR; Domain=.amazon.fr; Expires=Thu, 12-Oct-2023 13:39:04 GMT; Path=/"))
@@ -137,23 +131,7 @@ public class Application {
     return rank;
   }
 
-  public static int extractTotalRankFromProductPage(Document document) {
-    log.info("Start extracting total rank");
-    Element element = document.getElementById("detailBulletsWrapper_feature_div");
-    Elements elementsByClass = element.getElementsByClass("a-list-item");
-    int rank = elementsByClass.stream()
-        .filter(elem -> elem.text().matches(TOTAL_REGEX))
-        .map(elem -> extractRanking(elem, TOTAL_PATTERN))
-        .filter(Objects::nonNull)
-        .sorted()
-        .findFirst()
-        .orElseThrow(() -> new RuntimeException("Rank not found in product page"));
-
-    log.info("Total rank for the product is {}", rank);
-    return rank;
-  }
-
-  public static void sendMail(int rank) {
+  public static void sendMail(Map.Entry<String, String> entry, int rank) {
     log.info("Start sending email");
     Properties prop = new Properties();
     prop.put("mail.smtp.host", "smtp.gmail.com");
@@ -176,9 +154,9 @@ public class Application {
           Message.RecipientType.TO,
           InternetAddress.parse(TO_EMAILS)
       );
-      message.setSubject(rank + " rank amazon");
+      message.setSubject(rank + " rank amazon" + entry.getKey());
       message.setText("Congratulation !"
-          + "\n\n Your actual best amazon rank is " + rank);
+          + "\n\n Your actual best amazon rank is " + rank + "for your book " + entry.getKey());
 
       Transport.send(message);
 
